@@ -1,0 +1,5 @@
+# This one line ignores node_modules everywhere (root, client, and server)
+node_modules/
+
+# Ignore environment variables everywhere
+.env
