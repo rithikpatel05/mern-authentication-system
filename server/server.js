@@ -7,33 +7,50 @@ const cookieParser = require('cookie-parser');
 // Import Routes
 const authRoutes = require('./routes/auth');
 const fileRoutes = require('./routes/files');
-const socialRoutes = require('./routes/socialAuth');
+const stockRoutes = require('./routes/stocks');
 
 const app = express();
 
-// Middleware
-app.use(cors({ origin: 'http://localhost:3000', credentials: true }));
+// --- MIDDLEWARE ---
+// const cors = require('cors');
+
+app.use(cors({
+    origin: function (origin, callback) {
+        // 1. Allow requests with no origin (like Postman or mobile apps)
+        if (!origin) return callback(null, true);
+        
+        // 2. Allow any origin that matches your specific lists
+        const allowedOrigins = [
+            "http://localhost:3000",                        // Local dev
+            "http://192.168.0.25:3000",                     // Your WiFi IP (from your screenshot)
+            "https://hymenopterous-overventurous-roxane.ngrok-free.dev" // Your specific Ngrok URL
+        ];
+
+        // Check if the incoming origin is in our list
+        if (allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        } else {
+            console.log("🚫 Blocked by CORS:", origin); // Helps debug if it fails again
+            return callback(new Error('Not allowed by CORS'));
+        }
+    },
+    credentials: true, // Important if you are using cookies/sessions
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "ngrok-skip-browser-warning"]
+}));
+
 app.use(express.json());
 app.use(cookieParser());
 
-// Database
+// --- DATABASE ---
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected"))
   .catch(err => console.log("❌ MongoDB Error:", err));
 
-// --- USE ROUTES ---
-
-// 1. Auth Routes
-// Mounts at: /auth/signup, /auth/signin, etc.
+// --- ROUTES ---
 app.use('/auth', authRoutes); 
-
-// 2. File Routes
-// Mounts at: /files/upload, /files/
 app.use('/files', fileRoutes); 
-
-// 3. Social Routes
-// Mounts at root (/) to keep callbacks working
-app.use('/', socialRoutes);
+app.use('/stocks', stockRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

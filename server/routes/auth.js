@@ -1,140 +1,81 @@
 const router = require('express').Router();
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const nodemailer = require('nodemailer');
-const User = require('../models/User');
-const verifyToken = require('../middleware/verifyToken');
+const { CognitoIdentityProviderClient, InitiateAuthCommand } = require("@aws-sdk/client-cognito-identity-provider");
+const User = require('../models/User'); 
+// ✅ Ensure this points to your actual middleware file (verifyToken.js)
+const verifyToken = require('../middleware/verifyToken'); 
 
-// --- CONFIG ---
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+const client = new CognitoIdentityProviderClient({ 
+  region: process.env.AWS_REGION || "ap-south-1" 
 });
 
-// --- HELPER: SET COOKIES ---
-const sendTokenResponse = (user, statusCode, res) => {
-    const accessToken = jwt.sign({ id: user._id, name: user.name }, process.env.JWT_ACCESS_SECRET, { expiresIn: '15m' });
-    const refreshToken = jwt.sign({ id: user._id }, process.env.JWT_REFRESH_SECRET, { expiresIn: '1d' });
+// --- LOGIN ROUTE ---
+router.post('/login', async (req, res) => {
+  const { email, password } = req.body;
+  console.log(`🔐 Login attempt for: ${email}`); 
 
-    user.refreshToken = refreshToken;
-    user.save();
+  try {
+    const command = new InitiateAuthCommand({
+      AuthFlow: "USER_PASSWORD_AUTH",
+      ClientId: "73kdt77qvad8do4j3fqetu8k86", 
+      AuthParameters: { USERNAME: email, PASSWORD: password },
+    });
 
-    const options = {
-        expires: new Date(Date.now() + 1 * 24 * 60 * 60 * 1000), // 1 day
-        httpOnly: true,
-    };
+    const response = await client.send(command);
+    console.log("✅ AWS Cognito Login Success!"); 
 
-    res.status(statusCode)
-        .cookie('accessToken', accessToken, options)
-        .cookie('refreshToken', refreshToken, options)
-        .json({ 
-            success: true, 
-            user: { name: user.name, email: user.email, picture: user.picture, provider: user.provider } 
-        });
-};
+    const { AccessToken, IdToken, RefreshToken } = response.AuthenticationResult;
 
-// --- ROUTES ---
+    // Get User ID from Token
+    const payloadPart = IdToken.split('.')[1];
+    const decodedPayload = JSON.parse(atob(payloadPart));
+    const userId = decodedPayload.sub;
 
-// 1. SIGNUP
-router.post('/signup', async (req, res) => {
-    try {
-        const { name, email, password } = req.body;
-        const existingUser = await User.findOne({ email });
-        if (existingUser) return res.status(400).json({ error: "User already exists" });
+    // Sync to MongoDB
+    let user = await User.findOne({ cognitoId: userId });
+    if (!user) {
+      user = new User({
+        cognitoId: userId,
+        email: email, 
+        username: email.split('@')[0]
+      });
+      await user.save();
+    }
 
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(password, salt);
+    // Set Cookies (Backup)
+    const cookieOptions = { httpOnly: true, secure: true, sameSite: 'none', maxAge: 3600000 };
+    res.cookie('accessToken', AccessToken, cookieOptions);
+    res.cookie('refreshToken', RefreshToken, { ...cookieOptions, maxAge: 2592000000 });
 
-        const newUser = new User({ name, email, password: hashedPassword, provider: 'local', picture: "https://cdn-icons-png.flaticon.com/512/3135/3135715.png" });
-        await newUser.save();
-        res.status(201).json({ message: "User created" });
-    } catch (err) { res.status(500).json({ error: "Signup failed" }); }
+    // ✅ THE FIX: Send the Token explicitly!
+    res.json({ 
+      success: true, 
+      message: "Login Success",
+      token: AccessToken, // <--- CRITICAL LINE
+      user: { email: user.email, username: user.username }
+    });
+
+  } catch (error) {
+    console.error("Auth Error:", error);
+    res.status(401).json({ error: "Login failed", details: error.message });
+  }
 });
 
-// 2. SIGNIN
-router.post('/signin', async (req, res) => {
-    const { email, password } = req.body;
-    try {
-        const user = await User.findOne({ email });
-        if (!user) return res.status(404).json({ error: "User not found" });
-
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) return res.status(400).json({ error: "Invalid credentials" });
-
-        const otp = Math.floor(100000 + Math.random() * 900000).toString();
-        user.mfaSecret = otp;
-        user.mfaExpires = new Date(Date.now() + 10 * 60 * 1000);
-        await user.save();
-
-        const mailOptions = { from: 'My Secure App', to: user.email, subject: 'Your Code', text: `Code: ${otp}` };
-        transporter.sendMail(mailOptions, (error) => {
-            if (error) return res.status(500).json({ error: "Email failed" });
-            res.json({ message: "OTP sent", mfaRequired: true, email: user.email });
-        });
-    } catch (err) { res.status(500).json({ error: "Server Error" }); }
-});
-
-// 3. VERIFY MFA
-router.post('/verify-mfa', async (req, res) => {
-    const { email, otp } = req.body;
-    try {
-        const user = await User.findOne({ email });
-        if (!user || user.mfaSecret !== otp || user.mfaExpires < Date.now()) {
-            return res.status(400).json({ error: "Invalid or expired code" });
-        }
-        
-        user.mfaSecret = undefined;
-        user.mfaExpires = undefined;
-        await user.save();
-
-        sendTokenResponse(user, 200, res);
-
-    } catch (err) { res.status(500).json({ error: "Server Error" }); }
-});
-
-// 4. REFRESH TOKEN
-router.post('/refresh', async (req, res) => {
-    const refreshToken = req.cookies.refreshToken;
-
-    if (!refreshToken) return res.status(401).json({ error: "No token" });
-
-    try {
-        const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
-        const user = await User.findById(decoded.id);
-
-        if (!user || user.refreshToken !== refreshToken) {
-            return res.status(403).json({ error: "Invalid Refresh Token" });
-        }
-
-        const newAccessToken = jwt.sign(
-            { id: user._id, name: user.name }, 
-            process.env.JWT_ACCESS_SECRET, 
-            { expiresIn: '15m' }
-        );
-
-        res.cookie('accessToken', newAccessToken, { 
-            httpOnly: true, 
-            expires: new Date(Date.now() + 15 * 60 * 1000) 
-        });
-        
-        res.json({ success: true });
-
-    } catch (err) { res.status(403).json({ error: "Invalid Token" }); }
-});
-
-// 5. LOGOUT
-router.post('/logout', (req, res) => {
-    res.cookie('accessToken', '', { expires: new Date(0) });
-    res.cookie('refreshToken', '', { expires: new Date(0) });
-    res.json({ message: "Logged out" });
-});
-
-// 6. GET CURRENT USER
+// --- ME ROUTE ---
 router.get('/me', verifyToken, async (req, res) => {
-    try {
-        const user = await User.findById(req.user.id).select('-password');
-        res.json(user);
-    } catch (err) { res.status(500).json({ error: "Server Error" }); }
+  try {
+    const user = await User.findOne({ cognitoId: req.user.sub || req.user.id });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    res.json({ success: true, user: { email: user.email, username: user.username } });
+  } catch (err) {
+    res.status(500).json({ error: "Server Error" });
+  }
+});
+
+// --- LOGOUT ---
+router.post('/logout', (req, res) => {
+  res.clearCookie('accessToken');
+  res.clearCookie('refreshToken');
+  res.json({ success: true });
 });
 
 module.exports = router;

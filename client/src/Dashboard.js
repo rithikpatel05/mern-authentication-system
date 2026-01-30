@@ -6,9 +6,9 @@ function Dashboard({ user, onLogout }) {
 
     // --- 1. FETCH FILES (Updated URL) ---
     useEffect(() => {
-        // The route in server.js is '/files' and in files.js is '/'
-        // So the full URL is now '/files/'
-        api.get('/files/')
+        // The route in server.js is '/files' and in files.js is '/all-files'
+        // So the full URL is now '/files/all-files'
+        api.get('/files/all-files')
             .then(res => setFiles(res.data))
             .catch(err => console.error("Error fetching files:", err));
     }, []);

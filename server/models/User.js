@@ -1,23 +1,25 @@
 const mongoose = require('mongoose');
 
-const UserSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  email: { type: String, required: true, unique: true },
-  
-  // --- FIX IS HERE: Remove 'required: true' ---
-  password: { type: String }, 
-  
-  provider: { type: String, default: 'local' },
-  picture: { type: String },
-  refreshToken: { type: String },
-  
-  // MFA Fields
-  mfaSecret: { type: String },
-  mfaExpires: { type: Date },
-  
-  // Social IDs
-  linkedinId: { type: String },
-  facebookId: { type: String }
+const userSchema = new mongoose.Schema({
+  email: {
+    type: String,
+    required: true,
+    unique: true
+  },
+  cognitoId: {
+    type: String,
+    required: true,
+    unique: true
+  },
+  username: String,
+  role: {
+    type: String,
+    default: 'user' // You can use 'admin' later if needed
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  }
 });
 
-module.exports = mongoose.model('User', UserSchema);
+module.exports = mongoose.model('User', userSchema);
