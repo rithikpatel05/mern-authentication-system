@@ -14,30 +14,34 @@ const app = express();
 // --- MIDDLEWARE ---
 // const cors = require('cors');
 
-app.use(cors({
-    origin: function (origin, callback) {
-        // 1. Allow requests with no origin (like Postman or mobile apps)
-        if (!origin) return callback(null, true);
+// app.use(cors({
+//     origin: function (origin, callback) {
+//         // 1. Allow requests with no origin (like Postman or mobile apps)
+//         if (!origin) return callback(null, true);
         
-        // 2. Allow any origin that matches your specific lists
-        const allowedOrigins = [
-            "http://localhost:3000",                        // Local dev
-            "http://192.168.0.23:3000",                     // Your WiFi IP (from your screenshot)
-            "https://hymenopterous-overventurous-roxane.ngrok-free.dev",
-            "https://mern-authentication-system-alpha.vercel.app" // Your specific Ngrok URL
-        ];
+//         // 2. Allow any origin that matches your specific lists
+//         const allowedOrigins = [
+//             "http://localhost:3000",                        // Local dev
+//             "http://192.168.0.23:3000",                     // Your WiFi IP (from your screenshot)
+//             "https://hymenopterous-overventurous-roxane.ngrok-free.dev",
+//             "https://mern-authentication-system-alpha.vercel.app" // Your specific Ngrok URL
+//         ];
 
-        // Check if the incoming origin is in our list
-        if (allowedOrigins.includes(origin)) {
-            return callback(null, true);
-        } else {
-            console.log("🚫 Blocked by CORS:", origin); // Helps debug if it fails again
-            return callback(new Error('Not allowed by CORS'));
-        }
-    },
-    credentials: true, // Important if you are using cookies/sessions
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "ngrok-skip-browser-warning"]
+//         // Check if the incoming origin is in our list
+//         if (allowedOrigins.includes(origin)) {
+//             return callback(null, true);
+//         } else {
+//             console.log("🚫 Blocked by CORS:", origin); // Helps debug if it fails again
+//             return callback(new Error('Not allowed by CORS'));
+//         }
+//     },
+//     credentials: true, // Important if you are using cookies/sessions
+//     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+//     allowedHeaders: ["Content-Type", "Authorization", "ngrok-skip-browser-warning"]
+// }));
+app.use(cors({
+    origin: true, 
+    credentials: true
 }));
 
 app.use(express.json());
