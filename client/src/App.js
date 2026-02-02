@@ -17,7 +17,10 @@ Amplify.configure({
 axios.defaults.withCredentials = true;
 axios.defaults.headers.common['ngrok-skip-browser-warning'] = 'true';
 
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000"; 
+// Automatically switch between Localhost and Render
+const API_URL = window.location.hostname === "localhost"
+  ? "http://localhost:5000"  // 🏠 Your Laptop
+  : "https://mern-authentication-system-rzru.onrender.com"; // ☁️ Your Live Backend
 
 function App() {
   return (
