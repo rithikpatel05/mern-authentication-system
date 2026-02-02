@@ -22,7 +22,7 @@ app.use(cors({
         // 2. Allow any origin that matches your specific lists
         const allowedOrigins = [
             "http://localhost:3000",                        // Local dev
-            "http://192.168.0.25:3000",                     // Your WiFi IP (from your screenshot)
+            "http://192.168.0.23:3000",                     // Your WiFi IP (from your screenshot)
             "https://hymenopterous-overventurous-roxane.ngrok-free.dev" // Your specific Ngrok URL
         ];
 
@@ -52,5 +52,13 @@ app.use('/auth', authRoutes);
 app.use('/files', fileRoutes); 
 app.use('/stocks', stockRoutes);
 
+app.get("/", (req, res) => {
+  res.send("API is running...");
+});
+
+// Use the port Render gives us, or 5000 if we are on localhost
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
