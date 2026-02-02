@@ -23,7 +23,8 @@ app.use(cors({
         const allowedOrigins = [
             "http://localhost:3000",                        // Local dev
             "http://192.168.0.23:3000",                     // Your WiFi IP (from your screenshot)
-            "https://hymenopterous-overventurous-roxane.ngrok-free.dev" // Your specific Ngrok URL
+            "https://hymenopterous-overventurous-roxane.ngrok-free.dev",
+            "https://mern-authentication-system-alpha.vercel.app" // Your specific Ngrok URL
         ];
 
         // Check if the incoming origin is in our list
