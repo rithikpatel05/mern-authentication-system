@@ -1,7 +1,6 @@
 const router = require('express').Router();
 const { CognitoIdentityProviderClient, InitiateAuthCommand } = require("@aws-sdk/client-cognito-identity-provider");
 const User = require('../models/User'); 
-// ✅ Ensure this points to your actual middleware file (verifyToken.js)
 const verifyToken = require('../middleware/verifyToken'); 
 
 const client = new CognitoIdentityProviderClient({ 
@@ -46,12 +45,16 @@ router.post('/login', async (req, res) => {
     res.cookie('accessToken', AccessToken, cookieOptions);
     res.cookie('refreshToken', RefreshToken, { ...cookieOptions, maxAge: 2592000000 });
 
-    // ✅ THE FIX: Send the Token explicitly!
+    // ✅ THE FIX IS HERE: Added 'plan: user.plan'
     res.json({ 
       success: true, 
       message: "Login Success",
-      token: AccessToken, // <--- CRITICAL LINE
-      user: { email: user.email, username: user.username }
+      token: AccessToken, 
+      user: { 
+        email: user.email, 
+        username: user.username,
+        plan: user.plan // 🟢 CRITICAL: This sends "GOLD" to the frontend!
+      }
     });
 
   } catch (error) {
@@ -65,7 +68,16 @@ router.get('/me', verifyToken, async (req, res) => {
   try {
     const user = await User.findOne({ cognitoId: req.user.sub || req.user.id });
     if (!user) return res.status(404).json({ error: "User not found" });
-    res.json({ success: true, user: { email: user.email, username: user.username } });
+    
+    // ✅ ALSO FIXED HERE: Added 'plan: user.plan'
+    res.json({ 
+      success: true, 
+      user: { 
+        email: user.email, 
+        username: user.username,
+        plan: user.plan // 🟢 Ensures plan persists on page refresh
+      } 
+    });
   } catch (err) {
     res.status(500).json({ error: "Server Error" });
   }

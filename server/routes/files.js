@@ -6,6 +6,7 @@ const { S3Client, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/cl
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const File = require('../models/File');
 const verifyToken = require('../middleware/verifyToken'); 
+const User = require('../models/User');
 
 const s3Client = new S3Client({
   region: process.env.AWS_REGION,
@@ -70,18 +71,25 @@ router.post('/upload', verifyToken, (req, res, next) => {
 
 // 3. GET FILES ROUTE
 router.get('/all-files', verifyToken, async (req, res) => {
+    // 🟢 PLAN CHECK: Get user's plan
+    const user = await User.findOne({ cognitoId: req.user.sub || req.user.id });
+    if (!user) return res.status(401).json({ message: "User not found" });
+
   try {
     const files = await File.find().sort({ createdAt: -1 });
     
     const filesWithLinks = await Promise.all(files.map(async (fileDoc) => {
         const file = fileDoc.toObject();
-        if (file.s3Key) {
+        // 🟢 Only generate download URL for SILVER, GOLD, PLATINUM
+        if (file.s3Key && (user.plan === "SILVER" || user.plan === "GOLD" || user.plan === "PLATINUM")) {
             const command = new GetObjectCommand({
                 Bucket: process.env.AWS_BUCKET_NAME, 
                 Key: file.s3Key,
                 ResponseContentDisposition: `attachment; filename="${file.filename}"`
             });
             file.downloadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+        } else if (!file.downloadUrl) {
+          file.downloadUrl = null; // No download URL for FREE plan users
         }
         return file;
     }));
@@ -98,6 +106,14 @@ router.delete('/:id', verifyToken, async (req, res) => {
   try {
     const file = await File.findById(req.params.id);
     if (!file) return res.status(404).json({ message: "File not found" });
+    // 🟢 PLAN CHECK: Only GOLD and PLATINUM can delete
+    const user = await User.findOne({ cognitoId: req.user.sub || req.user.id });
+    if (!user) return res.status(401).json({ message: "User not found" });
+    
+    if (user.plan !== "GOLD" && user.plan !== "PLATINUM") {
+      return res.status(403).json({ message: "Only Gold/Platinum members can delete files. Upgrade your plan!" });
+    }
+
 
     if (file.s3Key) {
         const deleteCommand = new DeleteObjectCommand({

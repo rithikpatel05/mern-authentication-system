@@ -56,6 +56,7 @@ mongoose.connect(process.env.MONGO_URI)
 app.use('/auth', authRoutes); 
 app.use('/files', fileRoutes); 
 app.use('/stocks', stockRoutes);
+app.use("/api/stripe", require("./routes/stripe"));
 
 app.get("/", (req, res) => {
   res.send("API is running...");

@@ -4,6 +4,8 @@ import { Amplify } from 'aws-amplify';
 import { signUp, confirmSignUp } from 'aws-amplify/auth';
 import axios from "axios";
 import Stocks from "./Stocks";
+import Pricing from "./Pricing";
+import Success from "./Success";
 // AWS Config
 Amplify.configure({
   Auth: {
@@ -63,6 +65,8 @@ function AppRoutes() {
       <Route path="/" element={!user ? <LoginPage setUser={setUser} /> : <Navigate to="/dashboard" />} />
       <Route path="/dashboard" element={user ? <Dashboard user={user} setUser={setUser} /> : <Navigate to="/" />} />
       <Route path="/stocks" element={user ? <Stocks /> : <Navigate to="/" />} />
+      <Route path="/pricing" element={<Pricing />} />
+     <Route path="/success" element={<Success />} />
     </Routes>
   );
 }
@@ -81,20 +85,22 @@ function LoginPage({ setUser }) {
     e.preventDefault();
     setError("");
     try {
-      const res = await axios.post(`${API_URL}/auth/login`, { email, password });
-      
-      const token = res.data.token;
-      if (token) {
-        localStorage.setItem("token", token);
-        axios.defaults.headers.common['Authorization'] = token;
-      }
+     const res = await axios.post(`${API_URL}/auth/login`, { email, password });
+ 
+    const token = res.data.token;
+   if (token) {
+   localStorage.setItem("token", token);
+         // 🟢 ADD THIS LINE HERE:
+         localStorage.setItem("userEmail", email); 
+     axios.defaults.headers.common['Authorization'] = token;
+ }
 
-      setUser(res.data.user); 
-      navigate("/dashboard");
-    } catch (err) {
-      setError("Login failed: " + (err.response?.data?.error || "Invalid credentials"));
-    }
-  };
+ setUser(res.data.user); 
+ navigate("/dashboard");
+ } catch (err) {
+ setError("Login failed: " + (err.response?.data?.error || "Invalid credentials"));
+  }
+ };
 
   const handleSignUp = async (e) => {
     e.preventDefault();
@@ -164,15 +170,58 @@ function LoginPage({ setUser }) {
 
 // --- DASHBOARD ---
 function Dashboard({ user, setUser }) {
+  // --- EXISTING STATE ---
   const [file, setFile] = useState(null);
   const [allFiles, setAllFiles] = useState([]);
   const [status, setStatus] = useState("");
   const [uploadProgress, setUploadProgress] = useState(0);
+  
+  // State to track the User's Plan
+  const [userPlan, setUserPlan] = useState("FREE");
+
+  // 🟢 1. NEW: State for Search
+  const [searchTerm, setSearchTerm] = useState("");
+
   const navigate = useNavigate();
 
   useEffect(() => {
     fetchFiles();
-  }, []);
+
+    // 🟢 UPDATED: Fetch user plan from server for most current data
+    const fetchUserPlan = async () => {
+      try {
+        const token = localStorage.getItem("token");
+        const res = await axios.get(`${API_URL}/auth/me`, {
+          headers: { 'Authorization': token }
+        });
+        
+        // Check if the response includes plan info
+        if (res.data.user && res.data.user.plan) {
+          setUserPlan(res.data.user.plan);
+          localStorage.setItem("userPlan", res.data.user.plan);
+        } else {
+          // Fallback: Use localStorage if server doesn't return plan
+          const savedPlan = localStorage.getItem("userPlan");
+          if (savedPlan) setUserPlan(savedPlan);
+        }
+      } catch (err) {
+        console.error("Error fetching user plan:", err);
+        // Fallback to localStorage on error
+        const savedPlan = localStorage.getItem("userPlan");
+        if (savedPlan) setUserPlan(savedPlan);
+      }
+    };
+
+    fetchUserPlan();
+
+    // Also check if plan was recently updated (after payment)
+    const planUpdatedAt = localStorage.getItem("planUpdatedAt");
+    if (planUpdatedAt) {
+      // Plan was just updated, fetch fresh data from server
+      fetchUserPlan();
+      localStorage.removeItem("planUpdatedAt"); // Clean up the flag
+    }
+  }, [user]);
 
   const fetchFiles = async () => {
     try {
@@ -189,14 +238,14 @@ function Dashboard({ user, setUser }) {
   const handleUpload = async () => {
     if (!file) return alert("Select a file first!");
 
-    // 1. SECURITY CHECK: File Type
+    // SECURITY CHECK: File Type
     const forbiddenExtensions = /(\.exe|\.sh|\.bat|\.php|\.pl|\.vb|\.vbs|\.cmd|\.msi)$/i;
     if (forbiddenExtensions.test(file.name)) {
       alert("⚠️ Security Warning: You cannot upload executable files!");
       return;
     }
 
-    // 2. SECURITY CHECK: File Size (10MB Limit)
+    // SECURITY CHECK: File Size (10MB Limit)
     const MAX_SIZE = 10 * 1024 * 1024; 
     if (file.size > MAX_SIZE) {
         alert("⚠️ File too large! Maximum allowed size is 10MB.");
@@ -208,7 +257,7 @@ function Dashboard({ user, setUser }) {
 
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('userEmail', user.email || "unknown"); 
+    formData.append('userEmail', user?.email || "unknown"); 
 
     const token = localStorage.getItem("token");
     if (!token) return alert("Session lost. Please Login again.");
@@ -255,34 +304,65 @@ function Dashboard({ user, setUser }) {
   const handleSignOut = async () => {
     try { await axios.post(`${API_URL}/auth/logout`); } catch (err) {}
     localStorage.removeItem("token");
+    localStorage.removeItem("userPlan"); 
     delete axios.defaults.headers.common['Authorization'];
     setUser(null);
     navigate("/");
   };
 
+  // Plan Colors Configuration
+  const planColors = {
+    FREE: "#6c757d",      
+    SILVER: "#ced4da",    
+    GOLD: "#ffc107",      
+    PLATINUM: "#007bff"   
+  };
+
+  // 🟢 2. NEW: Filter Logic
+  // This creates a new list based on what the user typed
+  const filteredFiles = allFiles.filter((f) => 
+    f.filename.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
   return (
     <div style={{ maxWidth: '800px', margin: '40px auto', fontFamily: 'Arial' }}>
+      
       {/* --- HEADER START --- */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom:'20px' }}>
-        <h2>Dashboard</h2>
         
-        {/* 🟢 NEW: Button Group Wrapper */}
+        {/* Simple Rectangular Plan Card */}
+        <div style={{
+            backgroundColor: planColors[userPlan] || "#6c757d", 
+            color: (userPlan === "GOLD" || userPlan === "SILVER") ? "black" : "white", 
+            width: "200px",             
+            padding: "15px",            
+            borderRadius: "4px",        
+            textAlign: "center",        
+            fontWeight: "bold",         
+            fontSize: "18px",           
+            marginTop: "10px",          
+            border: "1px solid rgba(0,0,0,0.1)" 
+        }}>
+            {userPlan} PLAN
+        </div>
+        
         <div>
             <button 
                 onClick={() => navigate("/stocks")} 
-                style={{ 
-                    marginRight: '15px', 
-                    padding: '8px 16px', 
-                    backgroundColor: '#343a40', 
-                    color: 'white', 
-                    border: 'none', 
-                    borderRadius: '5px', 
-                    cursor: 'pointer',
-                    fontWeight: 'bold'
-                }}
+                style={styles.stockBtn}
             >
                 📈 Stocks
             </button>
+            
+            {/* Upgrade Button Logic */}
+            {userPlan !== "none" && (
+                <button 
+                    onClick={() => navigate("/pricing")} 
+                    style={styles.upgradeBtn}
+                >
+                    💎 Upgrade
+                </button>
+            )}
 
             <button onClick={handleSignOut} style={styles.logoutBtn}>Sign Out</button>
         </div>
@@ -291,6 +371,7 @@ function Dashboard({ user, setUser }) {
       
       <p>Logged in as: <strong>{user?.email}</strong></p>
 
+      {/* UPLOAD BOX */}
       <div style={styles.uploadBox}>
         <h3>Upload New File</h3>
         <input type="file" onChange={(e) => setFile(e.target.files[0])} />
@@ -305,31 +386,62 @@ function Dashboard({ user, setUser }) {
         )}
       </div>
 
-      <h3>All Uploaded Files:</h3>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px" }}>
+          <h3>All Uploaded Files:</h3>
+          
+          {/* 🟢 3. NEW: Search Input Box */}
+          <input 
+            type="text" 
+            placeholder="🔍 Search files..." 
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            style={{
+                padding: "8px 12px",
+                borderRadius: "5px",
+                border: "1px solid #ccc",
+                fontSize: "14px",
+                width: "250px"
+            }}
+          />
+      </div>
+
       <ul style={styles.list}>
-        {allFiles.map(f => (
+        {/* 🟢 UPDATED: Use filteredFiles instead of allFiles */}
+        {filteredFiles.length === 0 && <p style={{color: '#999', fontStyle: 'italic'}}>No files found matching "{searchTerm}"</p>}
+        
+        {filteredFiles.map(f => (
           <li key={f._id} style={styles.listItem}>
             <div>
               <span style={{ fontWeight: 'bold' }}>📄 {f.filename}</span><br/>
               <small>By: {f.ownerEmail}</small>
             </div>
             <div>
-                <a href={f.downloadUrl} style={styles.downloadLink}>Download ⬇️</a>
-                <button 
+                {/* DOWNLOAD: Available for SILVER, GOLD, PLATINUM */}
+                {(userPlan === "SILVER" || userPlan === "GOLD" || userPlan === "PLATINUM") ? (
+                  <a href={f.downloadUrl} style={styles.downloadLink}>Download ⬇️</a>
+                ) : (
+                  <button disabled style={{ ...styles.downloadLink, opacity: 0.5, cursor: 'not-allowed', backgroundColor: '#ccc' }}>
+                    Download ⬇️ 
+                  </button>
+                )}
+
+                {/* DELETE: Available only for GOLD, PLATINUM */}
+                {(userPlan === "GOLD" || userPlan === "PLATINUM") ? (
+                  <button 
                     onClick={() => handleDelete(f._id)}
-                    style={{
-                        marginLeft: '15px',
-                        padding: '6px 12px',
-                        backgroundColor: '#dc3545',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                        fontWeight: 'bold'
-                    }}
-                >
+                    style={styles.deleteBtn}
+                  >
                     Delete 🗑️
-                </button>
+                  </button>
+                ) : (
+                  <button 
+                    disabled
+                    style={{ ...styles.deleteBtn, backgroundColor: '#ccc', cursor: 'not-allowed', color: '#666' }}
+                    title="Only Gold/Platinum members can delete files"
+                  >
+                    Delete 🗑️ (Gold+ only)
+                  </button>
+                )}
             </div>
           </li>
         ))}
@@ -344,14 +456,21 @@ const styles = {
   input: { padding: '10px', fontSize: '16px', borderRadius: '5px', border: '1px solid #ccc', width: '90%' },
   primaryBtn: { padding: '12px', backgroundColor: '#007bff', color: 'white', border: 'none', borderRadius: '5px', fontSize: '16px', cursor: 'pointer', width: '100%' },
   successBtn: { padding: '12px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '5px', fontSize: '16px', cursor: 'pointer', width: '100%' },
-  uploadBtn: { padding: '10px 20px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '5px', marginLeft: '10px', cursor: 'pointer' },
+  
+  // Consolidated Button Styles
+  stockBtn: { marginRight: '15px', padding: '8px 16px', backgroundColor: '#343a40', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' },
+  upgradeBtn: { backgroundColor: "#ffc107", color: "black", padding: "8px 15px", marginRight: "10px", border: "none", borderRadius: "5px", cursor: "pointer", fontWeight: "bold", fontSize: "14px" },
   logoutBtn: { padding: '8px 16px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' },
+  uploadBtn: { padding: '10px 20px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '5px', marginLeft: '10px', cursor: 'pointer' },
+  deleteBtn: { marginLeft: '15px', padding: '6px 12px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' },
+  
   uploadBox: { padding: '20px', backgroundColor: '#f8f9fa', borderRadius: '8px', border: '1px solid #ddd', marginBottom: '30px' },
   list: { listStyle: 'none', padding: 0 },
   listItem: { padding: '15px', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   downloadLink: { color: '#007bff', textDecoration: 'none', fontWeight: 'bold', border: '1px solid #007bff', padding: '5px 10px', borderRadius: '5px' },
   link: { color: '#007bff', cursor: 'pointer', fontWeight: 'bold', textDecoration: 'underline' },
   form: { display: 'flex', flexDirection: 'column', gap: '15px' },
+  featureCard: { padding: '15px', border: '1px solid #ddd', borderRadius: '8px', marginBottom: '10px', backgroundColor: 'white', boxShadow: "0 2px 4px rgba(0,0,0,0.05)" }
 };
 
 export default App;

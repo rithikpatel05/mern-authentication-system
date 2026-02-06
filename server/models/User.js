@@ -19,7 +19,10 @@ const userSchema = new mongoose.Schema({
   createdAt: {
     type: Date,
     default: Date.now
-  }
+  },
+  // New fields for subscription plans
+  plan: { type: String, enum: ["FREE", "SILVER", "GOLD", "PLATINUM"], default: "FREE" },
+  planStartDate: { type: Date }
 });
 
 module.exports = mongoose.model('User', userSchema);
