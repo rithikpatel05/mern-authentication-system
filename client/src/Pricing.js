@@ -2,7 +2,8 @@ import React, { useEffect, useState } from "react";
 import axios from "axios";
 
 // Ensure this matches your backend URL
-const API_URL = "http://localhost:5000/api";
+// ✅ This tells React: "Use the Vercel setting if available, otherwise use localhost"
+const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000/api";
 
 const Pricing = () => {
     const [currentPlan, setCurrentPlan] = useState("FREE");
