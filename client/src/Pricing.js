@@ -3,7 +3,13 @@ import axios from "axios";
 
 // Ensure this matches your backend URL
 // ✅ This tells React: "Use the Vercel setting if available, otherwise use localhost"
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000/api";
+// ✅ AUTOMATIC URL SWITCHER
+// If running on your laptop -> uses localhost:5000/api
+// If running on Vercel -> uses your Render backend/api
+
+const API_URL = window.location.hostname === "localhost"
+  ? "http://localhost:5000/api" 
+  : "https://mern-authentication-system-rzru.onrender.com/api";
 
 const Pricing = () => {
     const [currentPlan, setCurrentPlan] = useState("FREE");
