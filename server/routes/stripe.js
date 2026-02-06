@@ -2,7 +2,7 @@ const router = require("express").Router();
 const User = require("../models/User");
 // Ensure this matches your .env file variable name
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
-
+const clientUrl = process.env.CLIENT_URL || "http://localhost:3000";
 router.post("/create-checkout-session", async (req, res) => {
     const { planName, amount } = req.body;
 
@@ -23,8 +23,8 @@ router.post("/create-checkout-session", async (req, res) => {
             ],
             mode: "payment",
             // 🟢 UPDATED: Redirect URLs
-            success_url: "http://localhost:3000/success?session_id={CHECKOUT_SESSION_ID}",
-            cancel_url: "http://localhost:3000/pricing",
+            success_url: `${clientUrl}/success?session_id={CHECKOUT_SESSION_ID}`,
+            cancel_url: `${clientUrl}/pricing`,
         });
 
         // 🟢 UPDATED: Send the full URL to the frontend
