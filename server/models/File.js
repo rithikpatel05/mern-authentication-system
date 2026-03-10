@@ -8,5 +8,5 @@ const fileSchema = new mongoose.Schema({
   ownerEmail: { type: String },              // Useful for displaying "Uploaded by..."
   createdAt: { type: Date, default: Date.now }
 });
-
+fileSchema.index({ createdAt: -1 });
 module.exports = mongoose.model('File', fileSchema);

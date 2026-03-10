@@ -12,17 +12,28 @@ const userSchema = new mongoose.Schema({
     unique: true
   },
   username: String,
+
   role: {
     type: String,
-    default: 'user' // You can use 'admin' later if needed
+    default: 'user'
   },
+
   createdAt: {
     type: Date,
     default: Date.now
   },
-  // New fields for subscription plans
-  plan: { type: String, enum: ["FREE", "SILVER", "GOLD", "PLATINUM"], default: "FREE" },
-  planStartDate: { type: Date }
-});
+
+  // Subscription fields
+  plan: { 
+    type: String, 
+    enum: ["FREE", "SILVER", "GOLD", "PLATINUM"], 
+    default: "FREE" 
+  },
+
+  planStartDate: { 
+    type: Date 
+  }
+
+}, { timestamps: true });
 
 module.exports = mongoose.model('User', userSchema);

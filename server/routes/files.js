@@ -16,7 +16,7 @@ const s3Client = new S3Client({
   }
 });
 
-// 🟢 1. UPLOAD CONFIG WITH SIZE LIMIT
+// 1. UPLOAD CONFIG WITH SIZE LIMIT
 const upload = multer({
   storage: multerS3({
     s3: s3Client,
@@ -28,25 +28,22 @@ const upload = multer({
       cb(null, Date.now().toString() + '-' + file.originalname);
     }
   }),
-  // 👇 STRICT 10MB LIMIT
+  // STRICT 10MB LIMIT
   limits: { fileSize: 10 * 1024 * 1024 } 
 });
 
-// 2. UPLOAD ROUTE (With Error Handling for Size)
+// 2. UPLOAD ROUTE
 router.post('/upload', verifyToken, (req, res, next) => {
     // We wrap the upload in a standard function to catch Multer errors manually
     const uploadSingle = upload.single('file');
 
     uploadSingle(req, res, async (err) => {
         if (err) {
-            // Check for specific Multer error
             if (err.code === 'LIMIT_FILE_SIZE') {
                 return res.status(400).json({ message: "File too large! Max 10MB." });
             }
             return res.status(500).json({ message: "Upload Error", error: err.message });
         }
-        
-        // If no error, proceed to save logic
         next();
     });
 }, async (req, res) => {
@@ -62,6 +59,19 @@ router.post('/upload', verifyToken, (req, res, next) => {
     });
 
     await newFile.save();
+
+    // 🟢 REDIS INVALIDATION: A new file was added, wipe the outdated cache!
+    const redisClient = req.app.get("redis");
+    if (redisClient) {
+        await redisClient.del("files_db_cache");
+    }
+
+    // 🟢 WEBSOCKET: Grab the megaphone and shout that a new file was added!
+    const io = req.app.get("io");
+    if (io) {
+        io.emit("files_changed"); 
+    }
+
     res.json({ message: "Success", file: newFile });
   } catch (error) {
     console.error("Save Error:", error);
@@ -71,16 +81,55 @@ router.post('/upload', verifyToken, (req, res, next) => {
 
 // 3. GET FILES ROUTE
 router.get('/all-files', verifyToken, async (req, res) => {
-    // 🟢 PLAN CHECK: Get user's plan
-    const user = await User.findOne({ cognitoId: req.user.sub || req.user.id });
+    // PLAN CHECK: Get user's plan
+// 1. Define the unique variables
+const cognitoId = req.user.sub || req.user.id;
+const redisClient = req.app.get("redis");
+const userCacheKey = `user_profile_${cognitoId}`; // Twist #1: Dynamic Key!
+
+let user;
+
+// 2. Ask Redis for this specific user's profile
+const cachedUser = await redisClient.get(userCacheKey);
+
+if (cachedUser) {
+    // 1. FIRST, parse the string into a usable object
+    user = JSON.parse(cachedUser);
+    
+    // 2. NOW we can safely read user.plan!
+    console.log(`👤 FAST LOAD: User Profile (${user.plan}) from Redis!`);
+} else {
+    console.log("🐌 SLOW LOAD: Fetching User Profile from MongoDB!");
+    user = await User.findOne({ cognitoId: cognitoId });
     if (!user) return res.status(401).json({ message: "User not found" });
 
+    await redisClient.set(userCacheKey, JSON.stringify(user), { EX: 3600 });
+}
   try {
-    const files = await File.find().sort({ createdAt: -1 });
+    // 🟢 REDIS CACHE IMPLEMENTATION
+    const redisClient = req.app.get("redis");
+    let rawFiles;
+
+    // A. Check if the files are sitting in Redis memory
+    const cachedFiles = await redisClient.get("files_db_cache");
+
+    if (cachedFiles) {
+        console.log("🚀 FAST LOAD: Serving file list from Redis Cache!");
+        rawFiles = JSON.parse(cachedFiles);
+    } else {
+        console.log("🐌 SLOW LOAD: Fetching file list from MongoDB!");
+        rawFiles = await File.find().sort({ createdAt: -1 });
+        
+        // B. Save a copy to Redis for the next person!
+        await redisClient.set("files_db_cache", JSON.stringify(rawFiles));
+    }
     
-    const filesWithLinks = await Promise.all(files.map(async (fileDoc) => {
-        const file = fileDoc.toObject();
-        // 🟢 Only generate download URL for SILVER, GOLD, PLATINUM
+    // C. Process the AWS Download Links based on user plan
+    const filesWithLinks = await Promise.all(rawFiles.map(async (fileDoc) => {
+        // Handle if the data came from Mongoose (.toObject exists) or plain JSON from Redis
+        const file = fileDoc.toObject ? fileDoc.toObject() : fileDoc; 
+
+        // Only generate download URL for SILVER, GOLD, PLATINUM
         if (file.s3Key && (user.plan === "SILVER" || user.plan === "GOLD" || user.plan === "PLATINUM")) {
             const command = new GetObjectCommand({
                 Bucket: process.env.AWS_BUCKET_NAME, 
@@ -106,14 +155,14 @@ router.delete('/:id', verifyToken, async (req, res) => {
   try {
     const file = await File.findById(req.params.id);
     if (!file) return res.status(404).json({ message: "File not found" });
-    // 🟢 PLAN CHECK: Only GOLD and PLATINUM can delete
+    
+    // PLAN CHECK: Only GOLD and PLATINUM can delete
     const user = await User.findOne({ cognitoId: req.user.sub || req.user.id });
     if (!user) return res.status(401).json({ message: "User not found" });
     
     if (user.plan !== "GOLD" && user.plan !== "PLATINUM") {
       return res.status(403).json({ message: "Only Gold/Platinum members can delete files. Upgrade your plan!" });
     }
-
 
     if (file.s3Key) {
         const deleteCommand = new DeleteObjectCommand({
@@ -124,6 +173,19 @@ router.delete('/:id', verifyToken, async (req, res) => {
     }
 
     await File.findByIdAndDelete(req.params.id);
+
+    // 🟢 REDIS INVALIDATION: A file was deleted, wipe the cache!
+    const redisClient = req.app.get("redis");
+    if (redisClient) {
+        await redisClient.del("files_db_cache");
+    }
+
+    // 🟢 WEBSOCKET: Tell everyone the file is gone!
+    const io = req.app.get("io");
+    if (io) {
+        io.emit("files_changed"); 
+    }
+
     res.json({ message: "File deleted successfully" });
   } catch (error) {
     console.error("Delete Error:", error);

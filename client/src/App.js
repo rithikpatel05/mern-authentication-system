@@ -6,6 +6,12 @@ import axios from "axios";
 import Stocks from "./Stocks";
 import Pricing from "./Pricing";
 import Success from "./Success";
+import DebugRedux from './DebugRedux';
+import { useForm } from "react-hook-form";
+import { useDispatch, useSelector } from 'react-redux';
+import { loginSuccess, logout } from './redux/authSlice';
+import { io } from "socket.io-client";
+
 // AWS Config
 Amplify.configure({
   Auth: {
@@ -28,12 +34,16 @@ function App() {
   return (
     <BrowserRouter>
       <AppRoutes />
+      {process.env.NODE_ENV !== 'production' && <DebugRedux />}
     </BrowserRouter>
   );
 }
 
 function AppRoutes() {
-  const [user, setUser] = useState(null);
+  // 🟢 2. REMOVE the old useState for user. Read from Redux instead!
+  const { user, isAuthenticated } = useSelector((state) => state.auth);
+  const dispatch = useDispatch(); 
+  
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -48,11 +58,16 @@ function AppRoutes() {
 
     try {
       const res = await axios.get(`${API_URL}/auth/me`);
-      setUser(res.data.user); 
+      
+      // 🟢 3. DISPATCH the user to the vault instead of setUser()
+      dispatch(loginSuccess({ token: token, user: res.data.user })); 
+      
     } catch (err) {
       localStorage.removeItem("token");
       delete axios.defaults.headers.common['Authorization'];
-      setUser(null);
+      
+      // 🟢 4. DISPATCH logout if the token is invalid
+      dispatch(logout()); 
     } finally {
       setLoading(false);
     }
@@ -62,64 +77,89 @@ function AppRoutes() {
 
   return (
     <Routes>
-      <Route path="/" element={!user ? <LoginPage setUser={setUser} /> : <Navigate to="/dashboard" />} />
-      <Route path="/dashboard" element={user ? <Dashboard user={user} setUser={setUser} /> : <Navigate to="/" />} />
-      <Route path="/stocks" element={user ? <Stocks /> : <Navigate to="/" />} />
+      {/* Notice we don't need to pass setUser down as a prop anymore! */}
+      <Route path="/" element={!isAuthenticated ? <LoginPage /> : <Navigate to="/dashboard" />} />
+      <Route path="/dashboard" element={isAuthenticated ? <Dashboard /> : <Navigate to="/" />} />
+      <Route path="/stocks" element={isAuthenticated ? <Stocks /> : <Navigate to="/" />} />
       <Route path="/pricing" element={<Pricing />} />
-     <Route path="/success" element={<Success />} />
+      <Route path="/success" element={<Success />} />
     </Routes>
   );
 }
 
-// --- LOGIN PAGE ---
-function LoginPage({ setUser }) {
+// import { useForm } from "react-hook-form";
+// import { useNavigate } from "react-router-dom";
+// import axios from "axios";
+// import { signUp, confirmSignUp } from "@aws-amplify/auth";
+
+// 🟢 1. Removed { setUser } from the props!
+function LoginPage() {
   const [view, setView] = useState("login");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [code, setCode] = useState(""); 
-  const [name, setName] = useState(""); 
   const [error, setError] = useState("");
   const navigate = useNavigate();
 
-  const handleLogin = async (e) => {
-    e.preventDefault();
+  // 🟢 2. Grab the Redux mailman
+  const dispatch = useDispatch(); 
+
+  // RHF forms
+  const loginForm = useForm();
+  const signupForm = useForm();
+  const confirmForm = useForm();
+
+  const handleLogin = async (data) => {
     setError("");
+
     try {
-     const res = await axios.post(`${API_URL}/auth/login`, { email, password });
- 
-    const token = res.data.token;
-   if (token) {
-   localStorage.setItem("token", token);
-         // 🟢 ADD THIS LINE HERE:
-         localStorage.setItem("userEmail", email); 
-     axios.defaults.headers.common['Authorization'] = token;
- }
+      const res = await axios.post(`${API_URL}/auth/login`, {
+        email: data.email,
+        password: data.password,
+      });
 
- setUser(res.data.user); 
- navigate("/dashboard");
- } catch (err) {
- setError("Login failed: " + (err.response?.data?.error || "Invalid credentials"));
-  }
- };
+      const token = res.data.token;
+      if (token) {
+        localStorage.setItem("token", token);
+        localStorage.setItem("userEmail", data.email);
+        axios.defaults.headers.common["Authorization"] = token;
+      }
 
-  const handleSignUp = async (e) => {
-    e.preventDefault();
+      // 🟢 3. DISPATCH the user and token directly to the Redux vault!
+      dispatch(loginSuccess({ token: token, user: res.data.user }));
+      
+      navigate("/dashboard");
+    } catch (err) {
+      setError(
+        "Login failed: " + (err.response?.data?.error || "Invalid credentials")
+      );
+    }
+  };
+
+  // ... (Keep your handleSignUp, handleConfirm, and the entire return() exactly the same!) ...
+
+  const handleSignUp = async (data) => {
+    setError("");
+
     try {
       const { nextStep } = await signUp({
-        username: email,
-        password,
-        options: { userAttributes: { email, name } }
+        username: data.email,
+        password: data.password,
+        options: { userAttributes: { email: data.email, name: data.name } },
       });
-      if (nextStep.signUpStep === 'CONFIRM_SIGN_UP') setView("confirm");
+
+      if (nextStep.signUpStep === "CONFIRM_SIGN_UP") setView("confirm");
     } catch (err) {
       setError(err.message);
     }
   };
 
-  const handleConfirm = async (e) => {
-    e.preventDefault();
+  const handleConfirm = async (data) => {
+    setError("");
+
     try {
-      await confirmSignUp({ username: email, confirmationCode: code });
+      await confirmSignUp({
+        username: data.email,
+        confirmationCode: data.code,
+      });
+
       alert("Verified! Please Login.");
       setView("login");
     } catch (err) {
@@ -130,64 +170,163 @@ function LoginPage({ setUser }) {
   return (
     <div style={styles.container}>
       <div style={styles.card}>
+
+        {/* ---------------- LOGIN ---------------- */}
         {view === "login" && (
           <>
             <h1>Welcome Back</h1>
-            <form onSubmit={handleLogin} style={styles.form}>
-              <input type="email" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} style={styles.input} required />
-              <input type="password" placeholder="Password" value={password} onChange={e=>setPassword(e.target.value)} style={styles.input} required />
-              <button type="submit" style={styles.primaryBtn}>Sign In</button>
+            <form onSubmit={loginForm.handleSubmit(handleLogin)} style={styles.form}>
+              <input
+                type="email"
+                placeholder="Email"
+                {...loginForm.register("email")}
+                style={styles.input}
+                required
+              />
+
+              <input
+                type="password"
+                placeholder="Password"
+                {...loginForm.register("password")}
+                style={styles.input}
+                required
+              />
+
+              <button type="submit" style={styles.primaryBtn}>
+                Sign In
+              </button>
             </form>
-            <p style={{marginTop: '15px'}}><span onClick={() => setView("signup")} style={styles.link}>Create Account</span></p>
+
+            <p style={{ marginTop: "15px" }}>
+              <span onClick={() => setView("signup")} style={styles.link}>
+                Create Account
+              </span>
+            </p>
           </>
         )}
+
+        {/* ---------------- SIGNUP ---------------- */}
         {view === "signup" && (
-           <>
+          <>
             <h1>Create Account</h1>
-            <form onSubmit={handleSignUp} style={styles.form}>
-              <input type="text" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} style={styles.input} required />
-              <input type="email" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} style={styles.input} required />
-              <input type="password" placeholder="Password" value={password} onChange={e=>setPassword(e.target.value)} style={styles.input} required />
-              <button type="submit" style={styles.successBtn}>Create Account</button>
+            <form onSubmit={signupForm.handleSubmit(handleSignUp)} style={styles.form}>
+              <input
+                type="text"
+                placeholder="Name"
+                {...signupForm.register("name")}
+                style={styles.input}
+                required
+              />
+
+              <input
+                type="email"
+                placeholder="Email"
+                {...signupForm.register("email")}
+                style={styles.input}
+                required
+              />
+
+              <input
+                type="password"
+                placeholder="Password"
+                {...signupForm.register("password")}
+                style={styles.input}
+                required
+              />
+
+              <button type="submit" style={styles.successBtn}>
+                Create Account
+              </button>
             </form>
-            <p style={{marginTop: '15px'}}><span onClick={() => setView("login")} style={styles.link}>Back to Login</span></p>
-           </>
+
+            <p style={{ marginTop: "15px" }}>
+              <span onClick={() => setView("login")} style={styles.link}>
+                Back to Login
+              </span>
+            </p>
+          </>
         )}
+
+        {/* ---------------- CONFIRM ---------------- */}
         {view === "confirm" && (
-           <>
-             <h1>Verify Email</h1>
-             <form onSubmit={handleConfirm} style={styles.form}>
-               <input placeholder="Enter Code" value={code} onChange={e=>setCode(e.target.value)} style={styles.input} required />
-               <button type="submit" style={styles.primaryBtn}>Verify</button>
-             </form>
-           </>
+          <>
+            <h1>Verify Email</h1>
+            <form onSubmit={confirmForm.handleSubmit(handleConfirm)} style={styles.form}>
+              <input
+                placeholder="Email"
+                {...confirmForm.register("email")}
+                style={styles.input}
+                required
+              />
+
+              <input
+                placeholder="Enter Code"
+                {...confirmForm.register("code")}
+                style={styles.input}
+                required
+              />
+
+              <button type="submit" style={styles.primaryBtn}>
+                Verify
+              </button>
+            </form>
+          </>
         )}
-        {error && <p style={{color:'red', marginTop:'10px'}}>{error}</p>}
+
+        {error && <p style={{ color: "red", marginTop: "10px" }}>{error}</p>}
       </div>
     </div>
   );
 }
 
 // --- DASHBOARD ---
-function Dashboard({ user, setUser }) {
+// import React, { useState, useEffect } from "react";
+// import axios from "axios";
+// import { useSelector, useDispatch } from "react-redux";
+// import { useNavigate } from "react-router-dom";
+// import { logout } from "./redux/authSlice"; // Ensure this path matches your project!
+
+// 🟢 1. IMPORT AND CONNECT THE SOCKET
+// import { io } from "socket.io-client";
+const socket = io("http://localhost:5000"); // Make sure this matches your Node server's URL!
+
+// const API_URL = window.location.hostname === "localhost"
+//   ? "http://localhost:5000"
+//   : "https://mern-authentication-system-rzru.onrender.com";
+
+function Dashboard() {
   // --- EXISTING STATE ---
   const [file, setFile] = useState(null);
   const [allFiles, setAllFiles] = useState([]);
   const [status, setStatus] = useState("");
   const [uploadProgress, setUploadProgress] = useState(0);
+  const { user } = useSelector((state) => state.auth);
+  const dispatch = useDispatch();
   
-  // State to track the User's Plan
+  // State to track the User's Plan & Search
   const [userPlan, setUserPlan] = useState("FREE");
-
-  // 🟢 1. NEW: State for Search
   const [searchTerm, setSearchTerm] = useState("");
 
   const navigate = useNavigate();
 
+  // 🟢 2. THE WEBSOCKET LISTENER
+  useEffect(() => {
+    // When the backend shouts "files_changed", run fetchFiles() silently!
+    socket.on("files_changed", () => {
+      console.log("🔄 Real-time update detected: Fetching fresh files!");
+      fetchFiles(); 
+    });
+
+    // Clean up the listener if the user logs out or leaves the page
+    return () => {
+      socket.off("files_changed");
+    };
+  }, []); // Empty array means this listener is set up once when the page loads
+
+  // --- EXISTING USE EFFECT (User Plan) ---
   useEffect(() => {
     fetchFiles();
 
-    // 🟢 UPDATED: Fetch user plan from server for most current data
     const fetchUserPlan = async () => {
       try {
         const token = localStorage.getItem("token");
@@ -195,18 +334,15 @@ function Dashboard({ user, setUser }) {
           headers: { 'Authorization': token }
         });
         
-        // Check if the response includes plan info
         if (res.data.user && res.data.user.plan) {
           setUserPlan(res.data.user.plan);
           localStorage.setItem("userPlan", res.data.user.plan);
         } else {
-          // Fallback: Use localStorage if server doesn't return plan
           const savedPlan = localStorage.getItem("userPlan");
           if (savedPlan) setUserPlan(savedPlan);
         }
       } catch (err) {
         console.error("Error fetching user plan:", err);
-        // Fallback to localStorage on error
         const savedPlan = localStorage.getItem("userPlan");
         if (savedPlan) setUserPlan(savedPlan);
       }
@@ -214,12 +350,10 @@ function Dashboard({ user, setUser }) {
 
     fetchUserPlan();
 
-    // Also check if plan was recently updated (after payment)
     const planUpdatedAt = localStorage.getItem("planUpdatedAt");
     if (planUpdatedAt) {
-      // Plan was just updated, fetch fresh data from server
       fetchUserPlan();
-      localStorage.removeItem("planUpdatedAt"); // Clean up the flag
+      localStorage.removeItem("planUpdatedAt"); 
     }
   }, [user]);
 
@@ -275,7 +409,11 @@ function Dashboard({ user, setUser }) {
       setUploadProgress(100);
       setFile(null); 
       document.querySelector('input[type="file"]').value = "";
+      
+      // 🟢 NOTE: We don't strictly need to call fetchFiles() here anymore because 
+      // the WebSocket will do it automatically, but leaving it doesn't hurt!
       fetchFiles(); 
+      
       setTimeout(() => setUploadProgress(0), 2000);
 
     } catch (err) {
@@ -294,6 +432,8 @@ function Dashboard({ user, setUser }) {
             headers: { 'Authorization': token }
         });
 
+        // 🟢 NOTE: We can remove the manual filter below if we want, 
+        // because the WebSocket will automatically refresh the whole list for us!
         setAllFiles(allFiles.filter(f => f._id !== fileId));
         alert("File Deleted!");
     } catch (err) {
@@ -306,7 +446,8 @@ function Dashboard({ user, setUser }) {
     localStorage.removeItem("token");
     localStorage.removeItem("userPlan"); 
     delete axios.defaults.headers.common['Authorization'];
-    setUser(null);
+    
+    dispatch(logout());
     navigate("/");
   };
 
@@ -318,8 +459,7 @@ function Dashboard({ user, setUser }) {
     PLATINUM: "#007bff"   
   };
 
-  // 🟢 2. NEW: Filter Logic
-  // This creates a new list based on what the user typed
+  // Filter Logic
   const filteredFiles = allFiles.filter((f) => 
     f.filename.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -330,11 +470,10 @@ function Dashboard({ user, setUser }) {
       {/* --- HEADER START --- */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom:'20px' }}>
         
-        {/* Simple Rectangular Plan Card */}
         <div style={{
             backgroundColor: planColors[userPlan] || "#6c757d", 
             color: (userPlan === "GOLD" || userPlan === "SILVER") ? "black" : "white", 
-            width: "200px",             
+            width: "200px",            
             padding: "15px",            
             borderRadius: "4px",        
             textAlign: "center",        
@@ -347,19 +486,12 @@ function Dashboard({ user, setUser }) {
         </div>
         
         <div>
-            <button 
-                onClick={() => navigate("/stocks")} 
-                style={styles.stockBtn}
-            >
+            <button onClick={() => navigate("/stocks")} style={styles.stockBtn}>
                 📈 Stocks
             </button>
             
-            {/* Upgrade Button Logic */}
             {userPlan !== "none" && (
-                <button 
-                    onClick={() => navigate("/pricing")} 
-                    style={styles.upgradeBtn}
-                >
+                <button onClick={() => navigate("/pricing")} style={styles.upgradeBtn}>
                     💎 Upgrade
                 </button>
             )}
@@ -389,7 +521,6 @@ function Dashboard({ user, setUser }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px" }}>
           <h3>All Uploaded Files:</h3>
           
-          {/* 🟢 3. NEW: Search Input Box */}
           <input 
             type="text" 
             placeholder="🔍 Search files..." 
@@ -406,7 +537,6 @@ function Dashboard({ user, setUser }) {
       </div>
 
       <ul style={styles.list}>
-        {/* 🟢 UPDATED: Use filteredFiles instead of allFiles */}
         {filteredFiles.length === 0 && <p style={{color: '#999', fontStyle: 'italic'}}>No files found matching "{searchTerm}"</p>}
         
         {filteredFiles.map(f => (
@@ -427,10 +557,7 @@ function Dashboard({ user, setUser }) {
 
                 {/* DELETE: Available only for GOLD, PLATINUM */}
                 {(userPlan === "GOLD" || userPlan === "PLATINUM") ? (
-                  <button 
-                    onClick={() => handleDelete(f._id)}
-                    style={styles.deleteBtn}
-                  >
+                  <button onClick={() => handleDelete(f._id)} style={styles.deleteBtn}>
                     Delete 🗑️
                   </button>
                 ) : (
@@ -457,7 +584,6 @@ const styles = {
   primaryBtn: { padding: '12px', backgroundColor: '#007bff', color: 'white', border: 'none', borderRadius: '5px', fontSize: '16px', cursor: 'pointer', width: '100%' },
   successBtn: { padding: '12px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '5px', fontSize: '16px', cursor: 'pointer', width: '100%' },
   
-  // Consolidated Button Styles
   stockBtn: { marginRight: '15px', padding: '8px 16px', backgroundColor: '#343a40', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' },
   upgradeBtn: { backgroundColor: "#ffc107", color: "black", padding: "8px 15px", marginRight: "10px", border: "none", borderRadius: "5px", cursor: "pointer", fontWeight: "bold", fontSize: "14px" },
   logoutBtn: { padding: '8px 16px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' },

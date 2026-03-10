@@ -4,6 +4,10 @@ import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
 
+// 1. Import the Redux tools
+import { Provider } from 'react-redux';
+import { store } from './redux/store';
+
 // 1. Import Amplify
 import { Amplify } from 'aws-amplify';
 
@@ -35,9 +39,17 @@ Amplify.configure({
 });
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
+// Expose store for quick console testing (dev only)
+if (process.env.NODE_ENV !== 'production') {
+  // eslint-disable-next-line no-undef
+  window.__APP_STORE__ = store;
+}
 root.render(
   <React.StrictMode>
-    <App />
+    {/* 2. Wrap the App with the Provider and pass it your store */}
+    <Provider store={store}>
+      <App />
+    </Provider>
   </React.StrictMode>
 );
 
