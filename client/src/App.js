@@ -300,30 +300,62 @@ function Dashboard() {
   const [allFiles, setAllFiles] = useState([]);
   const [status, setStatus] = useState("");
   const [uploadProgress, setUploadProgress] = useState(0);
-  const { user } = useSelector((state) => state.auth);
-  const dispatch = useDispatch();
   
   // State to track the User's Plan & Search
   const [userPlan, setUserPlan] = useState("FREE");
   const [searchTerm, setSearchTerm] = useState("");
 
+  // 🟢 NEW: State for online users
+  const [onlineUsers, setOnlineUsers] = useState([]);
+
+  // Hooks
+  const { user } = useSelector((state) => state.auth);
+  const dispatch = useDispatch();
   const navigate = useNavigate();
 
-  // 🟢 2. THE WEBSOCKET LISTENER
+  // 🟢 NEW: Function to get the current online list from Redis
+  const fetchOnlineUsers = async () => {
+      try {
+          const res = await axios.get(`${API_URL}/api/online-status`);
+          setOnlineUsers(res.data.onlineUsers || []);
+      } catch (err) {
+          console.error("Error fetching online status:", err);
+      }
+  };
+
+  // 🟢 UPDATED: THE WEBSOCKET LISTENER
   useEffect(() => {
-    // When the backend shouts "files_changed", run fetchFiles() silently!
+    // Don't connect until we know the user's email
+    if (!user?.email) return;
+
+    // 1. Connect and tell the server our email
+    const socket = io(API_URL, { 
+        query: { email: user.email } 
+    });
+
+    // 2. Get the initial list of who is online right now
+    fetchOnlineUsers();
+
+    // 3. Listen for file changes
     socket.on("files_changed", () => {
       console.log("🔄 Real-time update detected: Fetching fresh files!");
       fetchFiles(); 
     });
 
-    // Clean up the listener if the user logs out or leaves the page
-    return () => {
-      socket.off("files_changed");
-    };
-  }, []); // Empty array means this listener is set up once when the page loads
+    // 4. Listen for users logging in/out
+    socket.on("user_status_change", () => {
+      console.log("👥 Someone logged in or out! Updating green dots.");
+      fetchOnlineUsers();
+    });
 
-  // --- EXISTING USE EFFECT (User Plan) ---
+    // 5. Clean up when the user leaves the page
+    return () => {
+      socket.disconnect(); // This tells the backend to remove us from Redis
+    };
+  }, [user]);
+
+  // --- EXISTING USE EFFECT (Files & User Plan) ---
+  // --- EXISTING USE EFFECT (Files & User Plan) ---
   useEffect(() => {
     fetchFiles();
 
@@ -334,6 +366,13 @@ function Dashboard() {
           headers: { 'Authorization': token }
         });
         
+        // 🟢 FIX: If Redux lost the user email on refresh, connect the socket here!
+        if (res.data.user && res.data.user.email && !user?.email) {
+            const socket = io(API_URL, { query: { email: res.data.user.email } });
+            socket.on("user_status_change", () => fetchOnlineUsers());
+            socket.on("files_changed", () => fetchFiles());
+        }
+
         if (res.data.user && res.data.user.plan) {
           setUserPlan(res.data.user.plan);
           localStorage.setItem("userPlan", res.data.user.plan);
@@ -357,6 +396,7 @@ function Dashboard() {
     }
   }, [user]);
 
+  // --- ACTIONS ---
   const fetchFiles = async () => {
     try {
       const token = localStorage.getItem("token");
@@ -410,10 +450,7 @@ function Dashboard() {
       setFile(null); 
       document.querySelector('input[type="file"]').value = "";
       
-      // 🟢 NOTE: We don't strictly need to call fetchFiles() here anymore because 
-      // the WebSocket will do it automatically, but leaving it doesn't hurt!
       fetchFiles(); 
-      
       setTimeout(() => setUploadProgress(0), 2000);
 
     } catch (err) {
@@ -432,8 +469,6 @@ function Dashboard() {
             headers: { 'Authorization': token }
         });
 
-        // 🟢 NOTE: We can remove the manual filter below if we want, 
-        // because the WebSocket will automatically refresh the whole list for us!
         setAllFiles(allFiles.filter(f => f._id !== fileId));
         alert("File Deleted!");
     } catch (err) {
@@ -443,10 +478,12 @@ function Dashboard() {
 
   const handleSignOut = async () => {
     try { await axios.post(`${API_URL}/auth/logout`); } catch (err) {}
+    // clear client-side auth data
     localStorage.removeItem("token");
     localStorage.removeItem("userPlan"); 
     delete axios.defaults.headers.common['Authorization'];
-    
+
+    // use the slice action so `isAuthenticated` flips to false
     dispatch(logout());
     navigate("/");
   };
@@ -465,7 +502,7 @@ function Dashboard() {
   );
 
   return (
-    <div style={{ maxWidth: '800px', margin: '40px auto', fontFamily: 'Arial' }}>
+    <div style={{ maxWidth: '1100px', margin: '40px auto', fontFamily: 'Arial' }}>
       
       {/* --- HEADER START --- */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom:'20px' }}>
@@ -518,61 +555,99 @@ function Dashboard() {
         )}
       </div>
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px" }}>
-          <h3>All Uploaded Files:</h3>
-          
-          <input 
-            type="text" 
-            placeholder="🔍 Search files..." 
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            style={{
-                padding: "8px 12px",
-                borderRadius: "5px",
-                border: "1px solid #ccc",
-                fontSize: "14px",
-                width: "250px"
-            }}
-          />
-      </div>
-
-      <ul style={styles.list}>
-        {filteredFiles.length === 0 && <p style={{color: '#999', fontStyle: 'italic'}}>No files found matching "{searchTerm}"</p>}
+      {/* 🟢 NEW LAYOUT: Flexbox to create two columns */}
+      <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start' }}>
         
-        {filteredFiles.map(f => (
-          <li key={f._id} style={styles.listItem}>
-            <div>
-              <span style={{ fontWeight: 'bold' }}>📄 {f.filename}</span><br/>
-              <small>By: {f.ownerEmail}</small>
-            </div>
-            <div>
-                {/* DOWNLOAD: Available for SILVER, GOLD, PLATINUM */}
-                {(userPlan === "SILVER" || userPlan === "GOLD" || userPlan === "PLATINUM") ? (
-                  <a href={f.downloadUrl} style={styles.downloadLink}>Download ⬇️</a>
-                ) : (
-                  <button disabled style={{ ...styles.downloadLink, opacity: 0.5, cursor: 'not-allowed', backgroundColor: '#ccc' }}>
-                    Download ⬇️ 
-                  </button>
-                )}
+        {/* === LEFT COLUMN: The Files List === */}
+        <div style={{ flex: '1' }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px" }}>
+              <h3 style={{ margin: 0 }}>All Uploaded Files:</h3>
+              <input 
+                type="text" 
+                placeholder="🔍 Search files..." 
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                style={{ padding: "8px 12px", borderRadius: "5px", border: "1px solid #ccc", fontSize: "14px", width: "250px" }}
+              />
+          </div>
 
-                {/* DELETE: Available only for GOLD, PLATINUM */}
-                {(userPlan === "GOLD" || userPlan === "PLATINUM") ? (
-                  <button onClick={() => handleDelete(f._id)} style={styles.deleteBtn}>
-                    Delete 🗑️
-                  </button>
+          <ul style={styles.list}>
+            {filteredFiles.length === 0 && <p style={{color: '#999', fontStyle: 'italic'}}>No files found matching "{searchTerm}"</p>}
+            
+            {filteredFiles.map(f => (
+              <li key={f._id} style={styles.listItem}>
+                <div>
+                  <span style={{ fontWeight: 'bold' }}>📄 {f.filename}</span><br/>
+                  <small style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px', color: '#6c757d' }}>
+                    {/* Cleaned up left-aligned dot */}
+                    {onlineUsers.some(activeEmail => 
+                        activeEmail.toLowerCase().trim() === (f.ownerEmail || "").toLowerCase().trim()
+                    ) && (
+                        <span 
+                            title="User is online right now!"
+                            style={{
+                                height: '12px',
+                                width: '12px',
+                                backgroundColor: '#28a745', 
+                                borderRadius: '50%',
+                                display: 'inline-block',
+                                border: '2px solid white', 
+                                boxShadow: '0 0 0 1px #28a745', 
+                                flexShrink: 0
+                            }}
+                        ></span>
+                    )}
+                    <span>By: <strong style={{ color: '#343a40' }}>{f.ownerEmail}</strong></span>
+                  </small>
+                </div>
+
+                <div>
+                    {(userPlan === "SILVER" || userPlan === "GOLD" || userPlan === "PLATINUM") ? (
+                      <a href={f.downloadUrl} style={styles.downloadLink}>Download ⬇️</a>
+                    ) : (
+                      <button disabled style={{ ...styles.downloadLink, opacity: 0.5, cursor: 'not-allowed', backgroundColor: '#ccc' }}>Download ⬇️</button>
+                    )}
+
+                    {(userPlan === "GOLD" || userPlan === "PLATINUM") ? (
+                      <button onClick={() => handleDelete(f._id)} style={styles.deleteBtn}>Delete 🗑️</button>
+                    ) : (
+                      <button disabled style={{ ...styles.deleteBtn, backgroundColor: '#ccc', cursor: 'not-allowed', color: '#666' }}>Delete 🗑️ (Gold+ only)</button>
+                    )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+        
+        {/* === RIGHT COLUMN: Active Users Sidebar === */}
+        <div style={{ 
+            width: '260px', 
+            padding: '20px', 
+            backgroundColor: '#f8f9fa', 
+            border: '1px solid #e9ecef', 
+            borderRadius: '8px',
+            boxShadow: '0 2px 4px rgba(0,0,0,0.02)'
+        }}>
+            <h4 style={{ marginTop: 0, marginBottom: '15px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '2px solid #e9ecef', paddingBottom: '10px' }}>
+                <span style={{ height: '12px', width: '12px', backgroundColor: '#28a745', borderRadius: '50%', display: 'inline-block' }}></span>
+                Active Now ({onlineUsers.length})
+            </h4>
+            
+            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                {onlineUsers.length === 0 ? (
+                    <li style={{ fontSize: '14px', color: '#6c757d', fontStyle: 'italic' }}>No one is online</li>
                 ) : (
-                  <button 
-                    disabled
-                    style={{ ...styles.deleteBtn, backgroundColor: '#ccc', cursor: 'not-allowed', color: '#666' }}
-                    title="Only Gold/Platinum members can delete files"
-                  >
-                    Delete 🗑️ (Gold+ only)
-                  </button>
+                    onlineUsers.map(email => (
+                        <li key={email} style={{ padding: '8px 0', fontSize: '14px', borderBottom: '1px solid #f1f3f5', wordBreak: 'break-all' }}>
+                            {email} {email === user?.email && <span style={{ color: '#6c757d', fontSize: '12px' }}>(You)</span>}
+                        </li>
+                    ))
                 )}
-            </div>
-          </li>
-        ))}
-      </ul>
+            </ul>
+        </div>
+
+      </div>
+      {/* 🟢 END OF NEW LAYOUT */}
     </div>
   );
 }
@@ -599,4 +674,5 @@ const styles = {
   featureCard: { padding: '15px', border: '1px solid #ddd', borderRadius: '8px', marginBottom: '10px', backgroundColor: 'white', boxShadow: "0 2px 4px rgba(0,0,0,0.05)" }
 };
 
+// Fixed export to match the function name
 export default App;

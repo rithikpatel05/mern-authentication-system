@@ -2,7 +2,12 @@ const router = require("express").Router();
 const User = require("../models/User");
 // Ensure this matches your .env file variable name
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
-const clientUrl = process.env.CLIENT_URL || "http://localhost:3000";
+// pick the frontend base URL automatically
+// - in development use localhost
+// - in production rely on CLIENT_URL env var (set to your Vercel/Render URL)
+const clientUrl = process.env.NODE_ENV === "production"
+    ? process.env.CLIENT_URL
+    : "http://localhost:3000";
 router.post("/create-checkout-session", async (req, res) => {
     const { planName, amount } = req.body;
 
