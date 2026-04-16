@@ -3,17 +3,22 @@
 # Navigate to the deployment directory on the EC2 server
 cd /home/ubuntu/linkedin-login
 
-# 1. Log into AWS ECR
+echo "--- DEPLOYMENT DEBUG LOGS ---"
+echo "1. Checking if the file arrived from CodeBuild:"
+ls -la
+
+echo "2. Checking what is inside the file:"
+cat deploy_env.txt || echo "WARNING: deploy_env.txt is missing!"
+echo "-----------------------------"
+
+# 3. Log into AWS ECR
 aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 324178491391.dkr.ecr.ap-south-1.amazonaws.com
 
-# 2. Export the variables from the new text file
-export $(cat deploy_env.txt | xargs)
+# 4. Pull the specific versions (Let Docker read the file natively!)
+docker compose --env-file deploy_env.txt pull
 
-# 3. Pull the specific versions requested
-docker compose pull
-
-# 4. Stop the old containers
+# 5. Stop the old containers
 docker compose down
 
-# 5. Start the new containers in the background
-docker compose up -d
+# 6. Start the new containers in the background
+docker compose --env-file deploy_env.txt up -d
