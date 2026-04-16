@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   backend:
-    image: 324178491391.dkr.ecr.ap-south-1.amazonaws.com/linkedin-server:${SERVER_VERSION}
+    image: 324178491391.dkr.ecr.ap-south-1.amazonaws.com/mern-server:${SERVER_VERSION}
     container_name: mern-backend
     ports:
       - "5000:5000"
@@ -10,7 +10,7 @@ services:
       - .env
 
   frontend:
-    image: 324178491391.dkr.ecr.ap-south-1.amazonaws.com/linkedin-client:${CLIENT_VERSION}
+    image: 324178491391.dkr.ecr.ap-south-1.amazonaws.com/mern-client:${CLIENT_VERSION}
     container_name: mern-frontend
     ports:
       - "3000:3000"
