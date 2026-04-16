@@ -1,8 +1,8 @@
 version: 0.0
 os: linux
-# files:
-#   - source: /
-#     destination: /home/ubuntu/linkedin-login
+files:
+  - source: /
+    destination: /home/ubuntu/linkedin-login
 hooks:
   ApplicationStart:
     - location: scripts/deploy.sh

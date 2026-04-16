@@ -2,15 +2,15 @@ version: '3.8'
 
 services:
   backend:
-    image: 324178491391.dkr.ecr.ap-south-1.amazonaws.com/mern-server:latest
+    image: 324178491391.dkr.ecr.ap-south-1.amazonaws.com/linkedin-server:${SERVER_VERSION}
     container_name: mern-backend
     ports:
       - "5000:5000"
     env_file:
-      - .env  # We will manually create this file on the EC2 server later
+      - .env
 
   frontend:
-    image: 324178491391.dkr.ecr.ap-south-1.amazonaws.com/mern-client:latest
+    image: 324178491391.dkr.ecr.ap-south-1.amazonaws.com/linkedin-client:${CLIENT_VERSION}
     container_name: mern-frontend
     ports:
       - "3000:3000"
