@@ -288,7 +288,7 @@ function LoginPage() {
 
 // 🟢 1. IMPORT AND CONNECT THE SOCKET
 // import { io } from "socket.io-client";
-const socket = io("http://localhost:5000"); // Make sure this matches your Node server's URL!
+const socket = io(API_URL); // Make sure this matches your Node server's URL!
 
 // const API_URL = window.location.hostname === "localhost"
 //   ? "http://localhost:5000"
